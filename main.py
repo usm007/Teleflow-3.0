@@ -7,21 +7,21 @@ import ctypes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QListWidget, QTableWidget, QTableWidgetItem, QProgressBar, 
-    QFrame, QHeaderView, QLineEdit, QPushButton, QInputDialog, 
-    QStackedWidget, QAbstractItemView, QListWidgetItem, QDialog,
-    QGridLayout, QSizePolicy
+    QFrame, QHeaderView, QLineEdit, QPushButton, QStackedWidget, 
+    QAbstractItemView, QListWidgetItem, QGridLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QBrush, QFont, QCursor, QIcon
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCursor, QIcon
 from core import TelegramWorker
 from assets import (DecryptLabel, HackerProgressBar, TerminalLog, CyberGraph, 
                     CyberHexStream, ScanlineOverlay)
 
-# Windows Taskbar Icon Fix
+# --- TASKBAR ICON FIX ---
 try:
-    myappid = u'teleflow.downloader.pro.v3'
+    # This ID tells Windows this is a unique app, not just a generic Python script
+    myappid = u'teleflow.downloader.pro.v3' 
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-except:
+except Exception:
     pass
 
 STYLESHEET = """
@@ -34,7 +34,6 @@ STYLESHEET = """
     QLineEdit:focus { border: 1px solid #4caf50; background-color: #252526; }
     QFrame#Panel { background-color: #1e1e1e; border: 1px solid #333; border-radius: 6px; }
     QFrame#Footer { background-color: #0f0f0f; border-top: 1px solid #333; }
-    QFrame#StatBox { background-color: #161616; border: 1px solid #333; border-radius: 4px; }
     
     QLabel#GuideHeader { color: #4caf50; font-weight: bold; font-size: 18px; margin-bottom: 15px; }
     QLabel#GuideStep { color: #aaa; font-size: 13px; line-height: 1.6; }
@@ -43,10 +42,9 @@ STYLESHEET = """
     QListWidget::item { padding: 12px; border-bottom: 1px solid #252526; }
     QListWidget::item:selected { background-color: #2d362e; border-left: 4px solid #4caf50; color: white; }
     
-    QTableWidget { background-color: #121212; border: none; gridline-color: transparent; color: #888; alternate-background-color: #161616; outline: none; selection-background-color: transparent; }
-    QTableWidget::indicator { width: 14px; height: 14px; border: 1px solid #ffffff; border-radius: 2px; background-color: transparent; }
+    QTableWidget { background-color: #121212; border: none; gridline-color: transparent; color: #888; outline: none; }
+    QTableWidget::indicator { width: 14px; height: 14px; border: 1px solid #ffffff; border-radius: 2px; }
     QTableWidget::indicator:checked { background-color: #4caf50; border: 1px solid #ffffff; }
-    QTableWidget::item:hover { color: #ffffff; background-color: #1c1c1c; }
     QHeaderView::section { background-color: #121212; color: #555; border: none; border-bottom: 1px solid #333; padding: 10px; font-weight: bold; text-transform: uppercase; font-size: 10px; }
 
     QPushButton { background-color: #2e7d32; color: white; border: none; padding: 10px 20px; font-weight: 600; border-radius: 4px; }
@@ -63,58 +61,83 @@ class MainWindow(QMainWindow):
     def __init__(self, worker):
         super().__init__()
         self.worker = worker
-        self.setWindowIcon(QIcon("icon.ico"))
-        self.setWindowTitle("TELEFLOW v3.0 // PRO"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
+        
+        # --- SET ICON FOR WINDOW & TASKBAR ---
+        self.setWindowIcon(QIcon("icon.ico")) 
+        
+        self.setWindowTitle("TELEFLOW v3.0 GUI"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
         
         self.central_container = QWidget(); self.setCentralWidget(self.central_container)
         self.global_layout = QVBoxLayout(self.central_container); self.global_layout.setContentsMargins(0,0,0,0)
-        
         self.scanlines = ScanlineOverlay(self.central_container); self.scanlines.raise_()
         self.stack = QStackedWidget(); self.global_layout.addWidget(self.stack)
 
         self.init_footer(); self.init_login_page(); self.init_chat_page(); self.init_video_page(); self.init_download_page()
         self.is_downloading = False; self.all_chats = []; self.current_videos = []; self.sort_reverse = False
         
-        self.worker.saved_creds_found.connect(self.on_creds_found); self.worker.request_creds.connect(lambda: self.stack.setCurrentIndex(0))
-        self.worker.login_success.connect(lambda: self.stack.setCurrentIndex(1)); self.worker.chats_loaded.connect(self.store_and_populate_chats)
-        self.worker.videos_loaded.connect(self.populate_videos); self.worker.download_started.connect(self.on_dl_start)
-        self.worker.download_progress.connect(self.on_dl_progress); self.worker.queue_finished.connect(self.on_queue_finished)
-        self.worker.auth_status.connect(self.update_status); self.stack.currentChanged.connect(self.check_footer_visibility)
+        # Signal Connections
+        self.worker.saved_creds_found.connect(self.on_creds_found)
+        self.worker.request_creds.connect(lambda: self.stack.setCurrentIndex(0))
+        self.worker.login_success.connect(lambda: self.stack.setCurrentIndex(1))
+        self.worker.chats_loaded.connect(self.store_and_populate_chats)
+        self.worker.videos_loaded.connect(self.populate_videos)
+        self.worker.download_started.connect(self.on_dl_start)
+        self.worker.download_progress.connect(self.on_dl_progress)
+        self.worker.queue_finished.connect(self.on_queue_finished)
+        self.worker.auth_status.connect(self.update_status)
+        
+        # In-Place Authentication Signals
+        self.worker.request_otp.connect(lambda: self.login_stack.setCurrentIndex(1))
+        self.worker.request_password.connect(lambda: self.login_stack.setCurrentIndex(2))
+        
+        self.stack.currentChanged.connect(self.check_footer_visibility)
 
     def resizeEvent(self, event): self.scanlines.setGeometry(self.rect()); super().resizeEvent(event)
 
     def init_login_page(self):
         p = QWidget(); layout = QHBoxLayout(p); layout.setContentsMargins(60, 0, 60, 0); layout.setSpacing(0)
         
-        # LEFT: SYMMETRIC INSTRUCTIONS
         guide_area = QWidget(); g_main = QVBoxLayout(guide_area); g_main.setAlignment(Qt.AlignCenter)
         guide_pan = QFrame(); guide_pan.setObjectName("Panel"); guide_pan.setFixedWidth(450); g_ly = QVBoxLayout(guide_pan); g_ly.setContentsMargins(40, 40, 40, 40); g_ly.setSpacing(15)
         g_ly.addWidget(QLabel("UPLINK CONFIGURATION", objectName="GuideHeader", alignment=Qt.AlignCenter))
         
-        # Fixed 1st Line Alignment
         step1 = QLabel('1. Visit <a href="https://my.telegram.org" style="color: #4caf50; text-decoration: underline;">my.telegram.org</a> in your browser.', objectName="GuideStep")
         step1.setOpenExternalLinks(True); step1.setWordWrap(True); g_ly.addWidget(step1)
         
-        instructions = [
-            "2. Enter your phone number (e.g., +91...)",
-            "3. Submit the 'Login Code' from your Telegram App.",
-            "4. Access 'API Development Tools' inside.",
-            "5. Register a new App to generate your unique keys.",
-            "6. Copy 'App api_id' and 'App api_hash' to the right."
-        ]
+        instructions = ["2. Enter phone number (+91...)", "3. Submit 'Login Code' from Telegram.", "4. Open 'API Development Tools'.", "5. Register App to get API ID/Hash.", "6. Input credentials on the right."]
         for text in instructions:
             lbl = QLabel(text, objectName="GuideStep"); lbl.setWordWrap(True); g_ly.addWidget(lbl)
         g_main.addWidget(guide_pan); layout.addWidget(guide_area, 1)
 
-        # RIGHT: FORM
         login_area = QWidget(); l_main = QVBoxLayout(login_area); l_main.setAlignment(Qt.AlignCenter)
-        login_pan = QFrame(); login_pan.setObjectName("Panel"); login_pan.setFixedWidth(450); pl = QVBoxLayout(login_pan); pl.setSpacing(20); pl.setContentsMargins(40,40,40,40)
-        self.login_t = DecryptLabel("SYSTEM LOGIN", size=24); self.login_t.setAlignment(Qt.AlignCenter); pl.addWidget(self.login_t)
-        self.inp_api = QLineEdit(placeholderText="API ID"); pl.addWidget(self.inp_api)
-        self.inp_hash = QLineEdit(placeholderText="API Hash"); pl.addWidget(self.inp_hash)
-        self.inp_phone = QLineEdit(placeholderText="Phone Number"); pl.addWidget(self.inp_phone)
-        btn = QPushButton("ESTABLISH SECURE UPLINK"); btn.clicked.connect(self.do_connect); pl.addWidget(btn)
-        self.lbl_login_status = QLabel("Ready...", alignment=Qt.AlignCenter); pl.addWidget(self.lbl_login_status)
+        login_pan = QFrame(); login_pan.setObjectName("Panel"); login_pan.setFixedWidth(450); login_pan.setMinimumHeight(450)
+        self.login_stack = QStackedWidget(login_pan); pl = QVBoxLayout(login_pan); pl.addWidget(self.login_stack)
+        
+        # Page 0: Initial Form
+        pg_creds = QWidget(); p0_l = QVBoxLayout(pg_creds); p0_l.setSpacing(20); p0_l.setContentsMargins(20,20,20,20)
+        p0_l.addWidget(DecryptLabel("SYSTEM LOGIN", size=24), alignment=Qt.AlignCenter)
+        self.inp_api = QLineEdit(placeholderText="API ID"); p0_l.addWidget(self.inp_api)
+        self.inp_hash = QLineEdit(placeholderText="API Hash"); p0_l.addWidget(self.inp_hash)
+        self.inp_phone = QLineEdit(placeholderText="Phone Number"); p0_l.addWidget(self.inp_phone)
+        btn_con = QPushButton("ESTABLISH UPLINK"); btn_con.clicked.connect(self.do_connect); p0_l.addWidget(btn_con)
+        self.lbl_login_status = QLabel("Ready...", alignment=Qt.AlignCenter); p0_l.addWidget(self.lbl_login_status)
+        self.login_stack.addWidget(pg_creds)
+        
+        # Page 1: In-Place OTP
+        pg_otp = QWidget(); p1_l = QVBoxLayout(pg_otp); p1_l.setSpacing(20); p1_l.setContentsMargins(20,20,20,20)
+        p1_l.addWidget(DecryptLabel("VERIFY CODE", size=24), alignment=Qt.AlignCenter)
+        self.inp_otp = QLineEdit(placeholderText="Verification Code"); p1_l.addWidget(self.inp_otp)
+        btn_otp = QPushButton("VERIFY"); btn_otp.clicked.connect(lambda: asyncio.create_task(self.worker.submit_otp(self.inp_otp.text()))); p1_l.addWidget(btn_otp)
+        btn_b = QPushButton("BACK"); btn_b.setObjectName("Secondary"); btn_b.clicked.connect(lambda: self.login_stack.setCurrentIndex(0)); p1_l.addWidget(btn_b)
+        self.login_stack.addWidget(pg_otp)
+
+        # Page 2: In-Place 2FA
+        pg_2fa = QWidget(); p2_l = QVBoxLayout(pg_2fa); p2_l.setSpacing(20); p2_l.setContentsMargins(20,20,20,20)
+        p2_l.addWidget(DecryptLabel("CLOUD PWD", size=24), alignment=Qt.AlignCenter)
+        self.inp_2fa = QLineEdit(placeholderText="2FA Password"); self.inp_2fa.setEchoMode(QLineEdit.Password); p2_l.addWidget(self.inp_2fa)
+        btn_2fa = QPushButton("AUTHENTICATE"); btn_2fa.clicked.connect(lambda: asyncio.create_task(self.worker.submit_password(self.inp_2fa.text()))); p2_l.addWidget(btn_2fa)
+        self.login_stack.addWidget(pg_2fa)
+        
         l_main.addWidget(login_pan); layout.addWidget(login_area, 1); self.stack.addWidget(p)
 
     def init_chat_page(self):
@@ -173,7 +196,6 @@ class MainWindow(QMainWindow):
         s_txt = self.search_videos.text().lower(); self.video_table.setRowCount(0); f_vids = [v for v in self.current_videos if s_txt in v['name'].lower()]; self.video_table.setRowCount(len(f_vids))
         for i, v in enumerate(f_vids):
             c = QTableWidgetItem()
-            # AUTO-CHECK matches while typing
             is_checked = Qt.Checked if s_txt and s_txt in v['name'].lower() else Qt.Unchecked
             c.setCheckState(is_checked)
             self.video_table.setItem(i,0,c); num = QTableWidgetItem(str(i+1)); num.setTextAlignment(Qt.AlignCenter); self.video_table.setItem(i,1,num); self.video_table.setItem(i,2,QTableWidgetItem(v['name'])); sz = QTableWidgetItem(v['size']); sz.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter); self.video_table.setItem(i,3,sz)
@@ -190,8 +212,6 @@ class MainWindow(QMainWindow):
     def on_creds_found(self, a, h, p): self.inp_api.setText(a); self.inp_hash.setText(h); self.inp_phone.setText(p)
     def do_connect(self): asyncio.create_task(self.worker.connect_client(self.inp_api.text(), self.inp_hash.text(), self.inp_phone.text()))
     def update_status(self, m): self.lbl_login_status.setText(m)
-    def ask_otp(self): c, o = QInputDialog.getText(self, "OTP", "Code:"); [asyncio.create_task(self.worker.submit_otp(c)) if o else None]
-    def ask_password(self): p, o = QInputDialog.getText(self, "2FA", "Pwd:", QLineEdit.Password); [asyncio.create_task(self.worker.submit_password(p)) if o else None]
 
 def main():
     app = QApplication(sys.argv); loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
