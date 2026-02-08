@@ -3,6 +3,7 @@ import asyncio
 import qasync
 import random
 import webbrowser
+import ctypes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QListWidget, QTableWidget, QTableWidgetItem, QProgressBar, 
@@ -11,10 +12,17 @@ from PySide6.QtWidgets import (
     QGridLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QBrush, QFont, QCursor
+from PySide6.QtGui import QColor, QBrush, QFont, QCursor, QIcon
 from core import TelegramWorker
 from assets import (DecryptLabel, HackerProgressBar, TerminalLog, CyberGraph, 
                     CyberHexStream, ScanlineOverlay)
+
+# Windows Taskbar Icon Fix
+try:
+    myappid = u'teleflow.downloader.pro.v3'
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except:
+    pass
 
 STYLESHEET = """
     QMainWindow { background-color: #121212; }
@@ -55,9 +63,12 @@ class MainWindow(QMainWindow):
     def __init__(self, worker):
         super().__init__()
         self.worker = worker
-        self.setWindowTitle("TELEFLOW v3.0 / GUI"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
+        self.setWindowIcon(QIcon("icon.ico"))
+        self.setWindowTitle("TELEFLOW v3.0 // PRO"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
+        
         self.central_container = QWidget(); self.setCentralWidget(self.central_container)
         self.global_layout = QVBoxLayout(self.central_container); self.global_layout.setContentsMargins(0,0,0,0)
+        
         self.scanlines = ScanlineOverlay(self.central_container); self.scanlines.raise_()
         self.stack = QStackedWidget(); self.global_layout.addWidget(self.stack)
 
@@ -75,10 +86,12 @@ class MainWindow(QMainWindow):
     def init_login_page(self):
         p = QWidget(); layout = QHBoxLayout(p); layout.setContentsMargins(60, 0, 60, 0); layout.setSpacing(0)
         
+        # LEFT: SYMMETRIC INSTRUCTIONS
         guide_area = QWidget(); g_main = QVBoxLayout(guide_area); g_main.setAlignment(Qt.AlignCenter)
         guide_pan = QFrame(); guide_pan.setObjectName("Panel"); guide_pan.setFixedWidth(450); g_ly = QVBoxLayout(guide_pan); g_ly.setContentsMargins(40, 40, 40, 40); g_ly.setSpacing(15)
         g_ly.addWidget(QLabel("UPLINK CONFIGURATION", objectName="GuideHeader", alignment=Qt.AlignCenter))
         
+        # Fixed 1st Line Alignment
         step1 = QLabel('1. Visit <a href="https://my.telegram.org" style="color: #4caf50; text-decoration: underline;">my.telegram.org</a> in your browser.', objectName="GuideStep")
         step1.setOpenExternalLinks(True); step1.setWordWrap(True); g_ly.addWidget(step1)
         
@@ -93,6 +106,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(text, objectName="GuideStep"); lbl.setWordWrap(True); g_ly.addWidget(lbl)
         g_main.addWidget(guide_pan); layout.addWidget(guide_area, 1)
 
+        # RIGHT: FORM
         login_area = QWidget(); l_main = QVBoxLayout(login_area); l_main.setAlignment(Qt.AlignCenter)
         login_pan = QFrame(); login_pan.setObjectName("Panel"); login_pan.setFixedWidth(450); pl = QVBoxLayout(login_pan); pl.setSpacing(20); pl.setContentsMargins(40,40,40,40)
         self.login_t = DecryptLabel("SYSTEM LOGIN", size=24); self.login_t.setAlignment(Qt.AlignCenter); pl.addWidget(self.login_t)
@@ -141,6 +155,7 @@ class MainWindow(QMainWindow):
     def check_footer_visibility(self): self.footer.setVisible(self.is_downloading and self.stack.currentIndex() != 3)
     def create_stat_box(self, t, v, o, g=False): b = QFrame(); b.setObjectName("StatBox"); vl = QVBoxLayout(b); vl.addWidget(QLabel(t, objectName="StatTitle")); lb = QLabel(v, objectName="StatValueGreen" if g else "StatValue"); vl.addWidget(lb); setattr(self, o, lb); return b
     def store_and_populate_chats(self, chats): self.all_chats = chats; self.apply_chat_filter(); self.stack.setCurrentIndex(1)
+    
     def apply_chat_filter(self):
         s = self.sender(); [b.setChecked(False) for b in [self.btn_all, self.btn_ch, self.btn_gr, self.btn_dm] if s and s in [self.btn_all, self.btn_ch, self.btn_gr, self.btn_dm]]
         if s and s in [self.btn_all, self.btn_ch, self.btn_gr, self.btn_dm]: s.setChecked(True)
@@ -150,25 +165,18 @@ class MainWindow(QMainWindow):
             if show_type and search_text in c['name'].lower():
                 tag = "🟢 " if t == 'channel' else "🔵 " if t == 'group' else "👤 "
                 item = QListWidgetItem(f"{tag} {c['name']}"); item.setData(Qt.UserRole, c['id']); self.chat_list.addItem(item)
+    
     def populate_videos(self, v): self.current_videos = v; self.refresh_video_table()
     def toggle_sort(self): self.sort_reverse = not self.sort_reverse; self.current_videos.sort(key=lambda x: x['id'], reverse=self.sort_reverse); self.refresh_video_table()
     
     def refresh_video_table(self):
-        s_txt = self.search_videos.text().lower()
-        self.video_table.setRowCount(0)
-        f_vids = [v for v in self.current_videos if s_txt in v['name'].lower()]
-        self.video_table.setRowCount(len(f_vids))
-        
+        s_txt = self.search_videos.text().lower(); self.video_table.setRowCount(0); f_vids = [v for v in self.current_videos if s_txt in v['name'].lower()]; self.video_table.setRowCount(len(f_vids))
         for i, v in enumerate(f_vids):
             c = QTableWidgetItem()
-            # AUTO-CHECK if search is active and keyword matches
+            # AUTO-CHECK matches while typing
             is_checked = Qt.Checked if s_txt and s_txt in v['name'].lower() else Qt.Unchecked
             c.setCheckState(is_checked)
-            self.video_table.setItem(i, 0, c)
-            
-            num = QTableWidgetItem(str(i+1)); num.setTextAlignment(Qt.AlignCenter); self.video_table.setItem(i, 1, num)
-            self.video_table.setItem(i, 2, QTableWidgetItem(v['name']))
-            sz = QTableWidgetItem(v['size']); sz.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter); self.video_table.setItem(i, 3, sz)
+            self.video_table.setItem(i,0,c); num = QTableWidgetItem(str(i+1)); num.setTextAlignment(Qt.AlignCenter); self.video_table.setItem(i,1,num); self.video_table.setItem(i,2,QTableWidgetItem(v['name'])); sz = QTableWidgetItem(v['size']); sz.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter); self.video_table.setItem(i,3,sz)
 
     def on_video_cell_double_click(self, row, col):
         check_item = self.video_table.item(row, 0); check_item.setCheckState(Qt.Checked if check_item.checkState() == Qt.Unchecked else Qt.Unchecked)
@@ -189,6 +197,5 @@ def main():
     app = QApplication(sys.argv); loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
     worker = TelegramWorker(); window = MainWindow(worker); window.show(); loop.create_task(worker.check_saved_data())
     with loop: loop.run_forever()
-
 
 if __name__ == "__main__": main()
