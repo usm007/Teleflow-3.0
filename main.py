@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
     def __init__(self, worker):
         super().__init__()
         self.worker = worker
-        self.setWindowTitle("TELEFLOW v3.0 // PRO"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
+        self.setWindowTitle("TELEFLOW v3.0 / GUI"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
         self.central_container = QWidget(); self.setCentralWidget(self.central_container)
         self.global_layout = QVBoxLayout(self.central_container); self.global_layout.setContentsMargins(0,0,0,0)
         self.scanlines = ScanlineOverlay(self.central_container); self.scanlines.raise_()
@@ -189,5 +189,6 @@ def main():
     app = QApplication(sys.argv); loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
     worker = TelegramWorker(); window = MainWindow(worker); window.show(); loop.create_task(worker.check_saved_data())
     with loop: loop.run_forever()
+
 
 if __name__ == "__main__": main()
