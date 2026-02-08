@@ -4,6 +4,13 @@ import qasync
 import random
 import webbrowser
 import ctypes
+import sys, os
+
+def resource_path(relative_path):
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QListWidget, QTableWidget, QTableWidgetItem, QProgressBar, 
@@ -63,7 +70,7 @@ class MainWindow(QMainWindow):
         self.worker = worker
         
         # --- SET ICON FOR WINDOW & TASKBAR ---
-        self.setWindowIcon(QIcon("icon.ico")) 
+        self.setWindowIcon(QIcon(resource_path("icon.ico"))) 
         
         self.setWindowTitle("TELEFLOW v3.0 GUI"); self.resize(1200, 800); self.setStyleSheet(STYLESHEET)
         
