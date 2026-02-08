@@ -1,4 +1,4 @@
-## Teleflow v3.0 / GUI
+## Teleflow v3.0 GUI
 
 **Secure Telegram Data Exfiltration Suite**
 
@@ -72,5 +72,6 @@ To establish a secure uplink, you need your own Telegram API credentials:
 * `requirements.txt`: Project dependencies for standard environment setup.
 
 ---
+
 
 > **Note**: This tool is intended for personal backup and educational use. Ensure you comply with Telegram's Terms of Service and respect content ownership.
