@@ -100,6 +100,17 @@ To establish a secure uplink, you need your own Telegram API credentials:
 
 > **Note:** This tool is intended for personal backup and educational use. Ensure you comply with Telegram's Terms of Service and respect content ownership.
 
-```
 
-```
+**Screenshots:**
+
+
+<img width="1919" height="1020" alt="dddddddddd" src="https://github.com/user-attachments/assets/7111df9a-17c6-4349-bb92-05f78c2d2c01" />
+
+
+<img width="1919" height="1022" alt="aaaaaa" src="https://github.com/user-attachments/assets/9aa56026-baa3-4e24-a63f-ddc6db6be782" />
+
+
+<img width="1919" height="1079" alt="bbbbbbbbbbb" src="https://github.com/user-attachments/assets/38a53551-7599-4125-aa3d-e06a333987f2" />
+
+
+<img width="1919" height="1022" alt="ccccccccc" src="https://github.com/user-attachments/assets/4537422f-fecd-421e-89d5-014164b73c40" />
