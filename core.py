@@ -23,6 +23,9 @@ class TelegramWorker(QObject):
     videos_loaded = Signal(list)
     download_started = Signal(str, list)
     
+    # New Signal: Emits the count of videos found in real-time
+    scan_progress = Signal(int) 
+    
     # Global Batch Progress
     download_progress = Signal(str, int, str, str, str) 
     
@@ -114,19 +117,42 @@ class TelegramWorker(QObject):
 
     async def scan_chat(self, chat_id):
         videos = []
+        video_count = 0
+        self.scan_progress.emit(0) # Reset UI counter
+        
         try:
             entity = await self.client.get_entity(chat_id)
-            async for msg in self.client.iter_messages(entity, limit=500):
+            
+            # CHANGED: limit=None to load ALL messages
+            async for msg in self.client.iter_messages(entity, limit=None):
                 if msg.media and hasattr(msg.media, 'document'):
                     if any(isinstance(x, DocumentAttributeVideo) for x in msg.media.document.attributes):
                         size_mb = msg.media.document.size / (1024 * 1024)
                         filename = msg.file.name or f"payload_{msg.id}.mp4"
-                        videos.append({"id": msg.id, "name": filename, "size": f"{size_mb:.2f} MB", "msg": msg})
+                        
+                        raw_caption = msg.text or ""
+                        clean_caption = raw_caption.replace('\n', ' ').strip()
+                        display_caption = clean_caption if clean_caption else filename
+                        
+                        videos.append({
+                            "id": msg.id, 
+                            "name": filename,
+                            "caption": display_caption, 
+                            "size": f"{size_mb:.2f} MB", 
+                            "msg": msg
+                        })
+                        
+                        # Increment and emit progress
+                        video_count += 1
+                        if video_count % 5 == 0: # Update UI every 5 videos to reduce lag
+                            self.scan_progress.emit(video_count)
+
+            self.scan_progress.emit(video_count) # Final update
             self.videos_loaded.emit(videos)
+            
         except Exception as e:
             self.auth_status.emit(f"SCAN ERROR: {e}")
 
-    # --- MODIFIED: ACCEPT CONCURRENT LIMIT ---
     async def start_downloads(self, download_queue, concurrent_limit=3):
         self._current_task = asyncio.create_task(self._start_downloads_logic(download_queue, concurrent_limit))
         await self._current_task
@@ -143,7 +169,6 @@ class TelegramWorker(QObject):
         
         # Dynamic Semaphore
         sem = asyncio.Semaphore(concurrent_limit)
-        print(f"[DEBUG] Starting with {concurrent_limit} concurrent threads")
         
         async def download_worker(item):
             filename = item['name']
