@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QListWidget, QTableWidget, QTableWidgetItem, QProgressBar, 
     QFrame, QHeaderView, QLineEdit, QPushButton, QStackedWidget, 
-    QAbstractItemView, QListWidgetItem, QGridLayout, QSizePolicy, QSpinBox, QCheckBox
+    QAbstractItemView, QListWidgetItem, QGridLayout, QSizePolicy, QSpinBox, 
+    QCheckBox, QFileDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QCursor, QIcon, QColor, QBrush
 from core import TelegramWorker
 from assets import (DecryptLabel, HackerProgressBar, TerminalLog, CyberGraph, 
@@ -96,6 +97,11 @@ STYLESHEET = """
     QCheckBox::indicator { width: 18px; height: 18px; border: 1px solid #555; border-radius: 4px; background: #111; }
     QCheckBox::indicator:checked { background: #4caf50; border: 1px solid #4caf50; }
     QCheckBox:checked { color: #4caf50; }
+    
+    /* --- SCROLLBAR --- */
+    QScrollBar:vertical { border: none; background: #0f0f0f; width: 10px; margin: 0px 0px 0px 0px; }
+    QScrollBar::handle:vertical { background: #333; min-height: 20px; border-radius: 5px; }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 
     QLabel#StatTitle { color: #bbbbbb; font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }
     QLabel#StatValue { color: #ffffff; font-family: 'Consolas'; font-size: 12px; }
@@ -126,6 +132,11 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(resource_path("icon.ico"))) 
         self.setWindowTitle("TELEFLOW v3.0 GUI")
         self.resize(1000, 700) 
+        
+        # Load Settings (Last Download Path)
+        self.settings = QSettings("Teleflow", "Downloader")
+        default_dl = os.path.join(os.path.expanduser("~"), "Downloads")
+        self.download_path = self.settings.value("download_path", default_dl)
         
         center = QApplication.primaryScreen().availableGeometry().center()
         frame_geo = self.frameGeometry()
@@ -178,7 +189,6 @@ class MainWindow(QMainWindow):
         guide_area = QWidget(); g_main = QVBoxLayout(guide_area); g_main.setAlignment(Qt.AlignCenter)
         guide_pan = QFrame(); guide_pan.setObjectName("Panel")
         
-        # CHANGED: Replaced setFixedWidth with setMaximumWidth to allow shrinking
         guide_pan.setMaximumWidth(420); guide_pan.setMinimumWidth(300); guide_pan.setMinimumHeight(350)
         
         g_ly = QVBoxLayout(guide_pan); g_ly.setContentsMargins(40, 40, 40, 40); g_ly.setSpacing(15)
@@ -200,7 +210,6 @@ class MainWindow(QMainWindow):
         login_area = QWidget(); l_main = QVBoxLayout(login_area); l_main.setAlignment(Qt.AlignCenter)
         login_pan = QFrame(); login_pan.setObjectName("Panel")
         
-        # CHANGED: Replaced setFixedWidth with setMaximumWidth
         login_pan.setMaximumWidth(420); login_pan.setMinimumWidth(300); login_pan.setMinimumHeight(320)
         
         self.login_stack = QStackedWidget(login_pan); pl = QVBoxLayout(login_pan); pl.addWidget(self.login_stack)
@@ -292,10 +301,32 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self.list_stack)
         
+        # --- NEW: FOLDER SELECTION ---
+        path_layout = QHBoxLayout()
+        path_layout.addWidget(QLabel("SAVE LOCATION:", styleSheet="color:#aaa; font-weight:bold;"))
+        self.txt_path = QLineEdit(self.download_path)
+        self.txt_path.setReadOnly(True)
+        self.txt_path.setStyleSheet("color:#4caf50; border:1px solid #333; background:#111;")
+        path_layout.addWidget(self.txt_path)
+        btn_browse = QPushButton("BROWSE")
+        btn_browse.setFixedSize(100, 35)
+        btn_browse.setObjectName("Secondary")
+        btn_browse.clicked.connect(self.browse_folder)
+        path_layout.addWidget(btn_browse)
+        layout.addLayout(path_layout)
+        layout.addSpacing(10)
+        
         bl = QHBoxLayout(); bk = QPushButton("BACK"); bk.setObjectName("Secondary"); bk.clicked.connect(lambda: self.stack.setCurrentIndex(1)); self.btn_sel_all = QPushButton("SELECT ALL"); self.btn_sel_all.setObjectName("Secondary"); self.btn_sel_all.clicked.connect(self.toggle_select_all); dl = QPushButton("START EXFILTRATION"); dl.clicked.connect(self.start_download_batch); t_lbl = QLabel("THREADS:"); t_lbl.setStyleSheet("color:#aaa; font-weight:bold;"); self.spin_concurrent = QSpinBox(); self.spin_concurrent.setRange(1, 10); self.spin_concurrent.setValue(3); self.spin_concurrent.setFixedSize(60, 35); bl.addWidget(bk); bl.addWidget(self.btn_sel_all); bl.addStretch(); bl.addWidget(t_lbl); bl.addWidget(self.spin_concurrent); bl.addSpacing(10); bl.addWidget(dl); layout.addLayout(bl); self.stack.addWidget(p)
 
     def _make_visual_panel(self, widget):
         b = QFrame(); b.setObjectName("Panel"); b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding); vl = QVBoxLayout(b); vl.setContentsMargins(0,0,0,0); vl.addWidget(widget); return b
+
+    def browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder", self.download_path)
+        if folder:
+            self.download_path = folder
+            self.txt_path.setText(folder)
+            self.settings.setValue("download_path", folder)
 
     def init_download_page(self):
         p = QWidget(); layout = QVBoxLayout(p); layout.setContentsMargins(30, 30, 30, 30)
@@ -322,19 +353,17 @@ class MainWindow(QMainWindow):
         
         self.active_table = QTableWidget(0, 5); self.active_table.setObjectName("ActiveStats")
         self.active_table.verticalHeader().setVisible(False); self.active_table.horizontalHeader().setVisible(False)
-        self.active_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch) 
         
-        # CHANGED: REDUCED COLUMN WIDTHS TO FIT SPLIT SCREEN
-        self.active_table.setColumnWidth(1, 60)   # Was 80
-        self.active_table.setColumnWidth(2, 120)  # Was 160
-        self.active_table.setColumnWidth(3, 80)   # Was 120
-        self.active_table.setColumnWidth(4, 70)   # Was 90
+        self.active_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.active_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) # Percent
+        self.active_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Size
+        self.active_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Speed
+        self.active_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents) # ETA
         
         self.active_table.setShowGrid(False)
         self.active_table.setFocusPolicy(Qt.NoFocus); self.active_table.setSelectionMode(QAbstractItemView.NoSelection)
         af_lay.addWidget(self.active_table); split_layout.addWidget(active_frame, 3) 
 
-        # CHANGED: REDUCED FIXED WIDTH FROM 300 TO 240
         drama_frame = QFrame(); drama_frame.setObjectName("SectionPanel"); drama_frame.setFixedWidth(240)
         df_lay = QVBoxLayout(drama_frame); df_lay.setContentsMargins(5,5,5,5); df_lay.setSpacing(5)
         self.term_log = TerminalLog(); self.graph = CyberGraph(); self.hex_stream = CyberHexStream()
@@ -388,6 +417,32 @@ class MainWindow(QMainWindow):
     def start_download_batch(self):
         q = [self.current_videos[i] for i in range(self.video_table.rowCount()) if self.video_table.item(i,0).checkState() == Qt.Checked]
         if q:
+            # --- CONFLICT CHECK ---
+            conflicts = []
+            for item in q:
+                if os.path.exists(os.path.join(self.download_path, item['name'])):
+                    conflicts.append(item['name'])
+            
+            if conflicts:
+                box = QMessageBox(self)
+                box.setWindowTitle("FILE CONFLICT")
+                box.setText(f"{len(conflicts)} files already exist in the destination folder.")
+                box.setInformativeText("How do you want to proceed?")
+                box.setStyleSheet("background-color: #222; color: #eee;")
+                
+                btn_skip = box.addButton("Skip Existing", QMessageBox.ActionRole)
+                btn_over = box.addButton("Overwrite All", QMessageBox.ActionRole)
+                btn_cancel = box.addButton(QMessageBox.Cancel)
+                
+                box.exec()
+                
+                if box.clickedButton() == btn_cancel:
+                    return
+                elif box.clickedButton() == btn_skip:
+                    q = [x for x in q if x['name'] not in conflicts]
+                    if not q: return 
+            # ----------------------
+
             self.stack.setCurrentIndex(3)
             limit = self.spin_concurrent.value()
             self.active_table.setRowCount(len(q))
@@ -405,7 +460,9 @@ class MainWindow(QMainWindow):
                 self.active_table.setItem(i, 4, QTableWidgetItem("--"))
                 for c in range(5): 
                     if self.active_table.item(i,c): self.active_table.item(i,c).setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            asyncio.create_task(self.worker.start_downloads(q, limit))
+            
+            # --- FIX: Pass self.download_path here ---
+            asyncio.create_task(self.worker.start_downloads(q, limit, self.download_path))
 
     def on_dl_start(self, f, r): 
         if not self.is_downloading:
@@ -477,6 +534,10 @@ class MainWindow(QMainWindow):
         self.refresh_video_table()
     
     def refresh_video_table(self):
+        # --- OPTIMIZATION: DISABLE SORTING DURING UPDATE ---
+        # With 3000+ items, auto-sorting on every insert freezes the app.
+        self.video_table.setSortingEnabled(False)
+        
         s_txt = self.search_videos.text().lower()
         show_captions = self.chk_show_caption.isChecked()
         target_key = 'caption' if show_captions else 'name'
@@ -505,6 +566,9 @@ class MainWindow(QMainWindow):
             self.video_table.setItem(i, 3, sz)
             
         self.video_table.resizeRowsToContents()
+        
+        # Re-enable sorting (optional, can stay False if you prefer manual sort buttons)
+        # self.video_table.setSortingEnabled(True)
 
     def on_video_cell_double_click(self, row, col):
         check_item = self.video_table.item(row, 0); check_item.setCheckState(Qt.Checked if check_item.checkState() == Qt.Unchecked else Qt.Unchecked)
