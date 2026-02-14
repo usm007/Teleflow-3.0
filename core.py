@@ -2,8 +2,9 @@ import os
 import ctypes
 import asyncio
 import time
+import re
 from telethon import TelegramClient, errors
-from telethon.tl.types import DocumentAttributeVideo, Channel, Chat, User
+from telethon.tl.types import DocumentAttributeVideo, InputMessagesFilterVideo
 from PySide6.QtCore import QObject, Signal
 
 # --- CONFIG ---
@@ -23,7 +24,7 @@ class TelegramWorker(QObject):
     videos_loaded = Signal(list)
     download_started = Signal(str, list)
     
-    # New Signal: Emits the count of videos found in real-time
+    # Real-time scan counter
     scan_progress = Signal(int) 
     
     # Global Batch Progress
@@ -78,13 +79,6 @@ class TelegramWorker(QObject):
             self.login_success.emit()
             await self.fetch_dialogs()
 
-    async def purge_session(self):
-        if self.client: await self.client.disconnect()
-        session_path = os.path.join(os.getcwd(), f"{SESSION_NAME}.session")
-        if os.path.exists(session_path):
-            try: os.remove(session_path)
-            except: pass
-
     async def submit_otp(self, code):
         try:
             await self.client.sign_in(self.phone, code)
@@ -104,35 +98,42 @@ class TelegramWorker(QObject):
             self.auth_status.emit(f"ERROR: {e}")
 
     async def fetch_dialogs(self):
-        dialogs = await self.client.get_dialogs()
+        dialogs = await self.client.get_dialogs(limit=None)
         chat_list = []
         for d in dialogs:
             c_type = "dm"
-            if isinstance(d.entity, Channel):
+            if d.is_channel:
                 c_type = "channel" if d.entity.broadcast else "group"
-            elif isinstance(d.entity, Chat):
+            elif d.is_group:
                 c_type = "group"
             chat_list.append({"id": d.id, "name": d.name, "type": c_type})
         self.chats_loaded.emit(chat_list)
 
+    # --- HELPER: Sanitize Filenames ---
+    def _sanitize_filename(self, name):
+        clean_name = re.sub(r'[\\/*?:"<>|]', "", name)
+        clean_name = clean_name.strip()
+        return clean_name if clean_name else "unnamed_file"
+
     async def scan_chat(self, chat_id):
         videos = []
         video_count = 0
-        self.scan_progress.emit(0) # Reset UI counter
+        self.scan_progress.emit(0) 
         
         try:
             entity = await self.client.get_entity(chat_id)
-            
-            # CHANGED: limit=None to load ALL messages
-            async for msg in self.client.iter_messages(entity, limit=None):
+            async for msg in self.client.iter_messages(entity, limit=None, filter=InputMessagesFilterVideo):
                 if msg.media and hasattr(msg.media, 'document'):
                     if any(isinstance(x, DocumentAttributeVideo) for x in msg.media.document.attributes):
                         size_mb = msg.media.document.size / (1024 * 1024)
-                        filename = msg.file.name or f"payload_{msg.id}.mp4"
+                        
+                        original_name = msg.file.name or f"video.mp4"
+                        safe_name = self._sanitize_filename(original_name)
+                        filename = f"{msg.id}_{safe_name}"
                         
                         raw_caption = msg.text or ""
                         clean_caption = raw_caption.replace('\n', ' ').strip()
-                        display_caption = clean_caption if clean_caption else filename
+                        display_caption = clean_caption if clean_caption else safe_name
                         
                         videos.append({
                             "id": msg.id, 
@@ -142,39 +143,43 @@ class TelegramWorker(QObject):
                             "msg": msg
                         })
                         
-                        # Increment and emit progress
                         video_count += 1
-                        if video_count % 5 == 0: # Update UI every 5 videos to reduce lag
+                        if video_count % 10 == 0: 
                             self.scan_progress.emit(video_count)
 
-            self.scan_progress.emit(video_count) # Final update
+            self.scan_progress.emit(video_count)
             self.videos_loaded.emit(videos)
             
         except Exception as e:
             self.auth_status.emit(f"SCAN ERROR: {e}")
 
-    async def start_downloads(self, download_queue, concurrent_limit=3):
-        self._current_task = asyncio.create_task(self._start_downloads_logic(download_queue, concurrent_limit))
+    # --- UPDATED: Accepts save_path ---
+    async def start_downloads(self, download_queue, concurrent_limit, save_path):
+        self._current_task = asyncio.create_task(self._start_downloads_logic(download_queue, concurrent_limit, save_path))
         await self._current_task
 
-    async def _start_downloads_logic(self, download_queue, concurrent_limit):
-        os.makedirs("Downloads", exist_ok=True)
+    async def _start_downloads_logic(self, download_queue, concurrent_limit, save_path):
+        # Create user selected directory
+        os.makedirs(save_path, exist_ok=True)
+        
         self.is_cancelled = False
         self.is_paused = False
         
-        # Batch Globals
         self._batch_total_size = sum([item['msg'].file.size for item in download_queue])
         self._file_progress = {item['name']: 0 for item in download_queue}
         self._global_start_time = time.time()
         
-        # Dynamic Semaphore
         sem = asyncio.Semaphore(concurrent_limit)
         
         async def download_worker(item):
             filename = item['name']
             file_size = item['msg'].file.size
-            path = os.path.join("Downloads", filename)
+            
+            # UPDATED: Use the custom save_path
+            path = os.path.join(save_path, filename)
+            
             ind_start_time = time.time()
+            last_emit_time = 0 
             
             async with sem:
                 if self.is_cancelled: return
@@ -186,28 +191,35 @@ class TelegramWorker(QObject):
                 ind_start_time = time.time()
 
                 def progress_callback(current, total):
+                    nonlocal last_emit_time
                     if self.is_cancelled: raise Exception("MANUAL_ABORT")
                     
-                    # Individual Stats
-                    now = time.time()
-                    ind_elapsed = now - ind_start_time or 0.001
+                    current_time = time.time()
+                    if (current_time - last_emit_time < 0.1) and (current != total):
+                        return
+                    last_emit_time = current_time
+                    
+                    ind_elapsed = current_time - ind_start_time or 0.001
                     ind_speed = current / ind_elapsed
                     ind_percent = int((current / file_size) * 100)
                     ind_speed_str = f"{ind_speed / (1024*1024):.2f} MB/s"
+                    
+                    # Shortened Size String (User Request)
+                    ind_size_str = f"{current/(1024*1024):.1f}/{int(total/(1024*1024))} MB"
+                    
                     ind_remaining = file_size - current
                     ind_eta = ind_remaining / ind_speed if ind_speed > 0 else 0
                     ind_eta_str = time.strftime('%M:%S', time.gmtime(ind_eta))
-                    ind_size_str = f"{current/(1024*1024):.1f}/{total/(1024*1024):.1f} MB"
                     
                     self.individual_progress.emit(filename, ind_percent, ind_speed_str, ind_eta_str, ind_size_str)
                     
-                    # Global Stats
                     self._file_progress[filename] = current
                     global_current = sum(self._file_progress.values())
-                    glob_elapsed = now - self._global_start_time or 0.001
+                    glob_elapsed = current_time - self._global_start_time or 0.001
                     glob_speed = global_current / glob_elapsed
                     glob_speed_str = f"{glob_speed / (1024*1024):.2f} MB/s"
                     glob_percent = int((global_current / self._batch_total_size) * 100)
+                    
                     glob_remaining = self._batch_total_size - global_current
                     glob_eta = glob_remaining / glob_speed if glob_speed > 0 else 0
                     glob_eta_str = time.strftime('%H:%M:%S', time.gmtime(glob_eta))
@@ -221,6 +233,7 @@ class TelegramWorker(QObject):
                 except Exception as e:
                     if "MANUAL_ABORT" in str(e): raise e
                     print(f"[ERROR] {filename}: {e}")
+                    self.individual_progress.emit(filename, 0, "FAILED", "--", "ERROR")
 
         tasks = [asyncio.create_task(download_worker(item)) for item in download_queue]
         try:
