@@ -415,7 +415,17 @@ class MainWindow(QMainWindow):
         self.lbl_queue_count.setText(f"⏳ QUEUED: {self.cnt_queue}")
 
     def start_download_batch(self):
-        q = [self.current_videos[i] for i in range(self.video_table.rowCount()) if self.video_table.item(i,0).checkState() == Qt.Checked]
+        q = []
+        # --- FIXED: Retrieve stored video data from the table item ---
+        for i in range(self.video_table.rowCount()):
+            item = self.video_table.item(i, 0)
+            if item.checkState() == Qt.Checked:
+                # Get the actual video object we stored in setData(Qt.UserRole)
+                # This ensures correct file is downloaded even if list is filtered/sorted
+                video_data = item.data(Qt.UserRole)
+                if video_data:
+                    q.append(video_data)
+
         if q:
             # --- CONFLICT CHECK ---
             conflicts = []
@@ -461,7 +471,6 @@ class MainWindow(QMainWindow):
                 for c in range(5): 
                     if self.active_table.item(i,c): self.active_table.item(i,c).setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
             
-            # --- FIX: Pass self.download_path here ---
             asyncio.create_task(self.worker.start_downloads(q, limit, self.download_path))
 
     def on_dl_start(self, f, r): 
@@ -535,7 +544,6 @@ class MainWindow(QMainWindow):
     
     def refresh_video_table(self):
         # --- OPTIMIZATION: DISABLE SORTING DURING UPDATE ---
-        # With 3000+ items, auto-sorting on every insert freezes the app.
         self.video_table.setSortingEnabled(False)
         
         s_txt = self.search_videos.text().lower()
@@ -547,8 +555,15 @@ class MainWindow(QMainWindow):
         
         for i, v in enumerate(f_vids):
             c = QTableWidgetItem()
-            is_checked = Qt.Checked if s_txt and s_txt in v[target_key].lower() else Qt.Unchecked
-            c.setCheckState(is_checked)
+            
+            # --- FIXED: Stopped auto-selecting when searching ---
+            # Default state is Unchecked
+            c.setCheckState(Qt.Unchecked)
+            
+            # --- FIXED: Store the video object in the item data ---
+            # This allows us to retrieve the correct video later, regardless of sort/filter order
+            c.setData(Qt.UserRole, v)
+            
             self.video_table.setItem(i, 0, c)
             
             num = QTableWidgetItem(str(i+1))
@@ -566,9 +581,6 @@ class MainWindow(QMainWindow):
             self.video_table.setItem(i, 3, sz)
             
         self.video_table.resizeRowsToContents()
-        
-        # Re-enable sorting (optional, can stay False if you prefer manual sort buttons)
-        # self.video_table.setSortingEnabled(True)
 
     def on_video_cell_double_click(self, row, col):
         check_item = self.video_table.item(row, 0); check_item.setCheckState(Qt.Checked if check_item.checkState() == Qt.Unchecked else Qt.Unchecked)
