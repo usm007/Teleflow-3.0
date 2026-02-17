@@ -10,17 +10,18 @@ Before commencing operations, you must establish a secure handshake with the Tel
 
 ### 1. Acquire Credentials
 1. Navigate to [my.telegram.org](https://my.telegram.org) securely.
-2. Login and select **"API Development Tools"**.
-3. Create a new application (Name: `Teleflow_Ops`, Shortname: `tflow`).
-4. Copy your unique `App api_id` and `App api_hash`.
+   <img width="1100" height="533" alt="Screenshot_1" src="https://github.com/user-attachments/assets/4b7c95b6-5be0-4a3f-b10a-fb391b011175" />
 
-<img width="1100" height="533" alt="Screenshot_1" src="https://github.com/user-attachments/assets/4b7c95b6-5be0-4a3f-b10a-fb391b011175" />
+3. Login and select **"API Development Tools"**.
+   <img width="619" height="257" alt="Screenshot_2" src="https://github.com/user-attachments/assets/ac04783b-b90f-46ac-8139-79a2016288ac" />
 
-<img width="619" height="257" alt="Screenshot_2" src="https://github.com/user-attachments/assets/ac04783b-b90f-46ac-8139-79a2016288ac" />
+5. Create a new application (Name: `Teleflow_Ops`, Shortname: `tflow`).
+   <img width="895" height="373" alt="Screenshot_3" src="https://github.com/user-attachments/assets/0217170d-1842-4e57-9f06-eeb42090b9fe" />
 
-<img width="895" height="373" alt="Screenshot_3" src="https://github.com/user-attachments/assets/0217170d-1842-4e57-9f06-eeb42090b9fe" />
+7. Copy your unique `App api_id` and `App api_hash`
+   <img width="1198" height="411" alt="App-configuration" src="https://github.com/user-attachments/assets/9c564a40-9163-46cb-a7ff-de22afe8ba5e" />.
 
-<img width="1198" height="411" alt="App-configuration" src="https://github.com/user-attachments/assets/9c564a40-9163-46cb-a7ff-de22afe8ba5e" />
+
 
 
 
