@@ -4,6 +4,8 @@
 
 ---
 
+
+
 ## 📡 PHASE 1: UPLINK CONFIGURATION
 
 Before commencing operations, you must establish a secure handshake with the Telegram Data Center (DC).
@@ -31,6 +33,10 @@ Before commencing operations, you must establish a secure handshake with the Tel
 <img width="1198" height="411" alt="App-configuration" src="https://github.com/user-attachments/assets/9c564a40-9163-46cb-a7ff-de22afe8ba5e" />.
 
 
+
+
+
+
 ### 2. Establish Connection
 * **Launch Teleflow.**
 * Input your **API ID** and **API HASH** into the designated terminal fields.
@@ -41,6 +47,10 @@ Before commencing operations, you must establish a secure handshake with the Tel
 > **⚠️ SECURITY NOTE:** Credentials are stored locally in `~/.tbtgdl/credentials.txt` with standard OS-level protection.
 
 ---
+
+
+
+
 
 ## 🎯 PHASE 2: TARGET ACQUISITION
 
@@ -54,6 +64,10 @@ Once authenticated, the system will decrypt your dialog graph.
     * *The Matrix Loader will visualize the retrieval of video objects.*
 
 ---
+
+
+
+
 
 ## 📂 PHASE 3: PAYLOAD ANALYSIS
 
@@ -74,6 +88,10 @@ The **Payload Directory** lists all available video assets. You must identify va
 
 ---
 
+
+
+
+
 ## 🚀 PHASE 4: EXFILTRATION (DOWNLOAD)
 
 1.  **Select Targets:**
@@ -86,6 +104,8 @@ The **Payload Directory** lists all available video assets. You must identify va
 4.  **Execute:**
     * Click **[START EXFILTRATION]**.
 
+
+
 ### Active Uplink Manifest
 During the operation, the dashboard provides real-time telemetry:
 * **Throughput Graph:** Monitors network speed stability.
@@ -95,6 +115,10 @@ During the operation, the dashboard provides real-time telemetry:
 > **MISSION COMPLETE:** Enable `[x] AUTO SHUTDOWN` if leaving the terminal unattended.
 
 ---
+
+
+
+
 
 ### 🔧 TROUBLESHOOTING
 
