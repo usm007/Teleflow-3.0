@@ -42,16 +42,22 @@ class TelegramWorker(QObject):
         self.phone = None
         self.is_paused = False
         self.is_cancelled = False
-        self._current_task = None
+        self.is_running = False
+        
+        # Queue Management
+        self._download_queue = asyncio.Queue()
+        self._active_tasks = set()
         self._batch_total_size = 0
-        self._file_progress = {} 
-
+        self._file_progress = {}
+        self._global_start_time = 0
+        
     def set_pause(self, paused: bool):
         self.is_paused = paused
 
     def stop_task(self):
         self.is_cancelled = True
 
+    # --- AUTH & SCANNING (Unchanged) ---
     async def check_saved_data(self):
         api_id, api_hash, phone = self._load_credentials()
         if api_id and api_hash and phone:
@@ -109,7 +115,6 @@ class TelegramWorker(QObject):
             chat_list.append({"id": d.id, "name": d.name, "type": c_type})
         self.chats_loaded.emit(chat_list)
 
-    # --- HELPER: Sanitize Filenames ---
     def _sanitize_filename(self, name):
         clean_name = re.sub(r'[\\/*?:"<>|]', "", name)
         clean_name = clean_name.strip()
@@ -153,97 +158,136 @@ class TelegramWorker(QObject):
         except Exception as e:
             self.auth_status.emit(f"SCAN ERROR: {e}")
 
-    # --- UPDATED: Accepts save_path ---
-    async def start_downloads(self, download_queue, concurrent_limit, save_path):
-        self._current_task = asyncio.create_task(self._start_downloads_logic(download_queue, concurrent_limit, save_path))
-        await self._current_task
+    # --- DYNAMIC DOWNLOAD QUEUE ---
+    
+    async def add_to_queue(self, new_items, concurrent_limit, save_path):
+        """Adds items to the queue. Starts the processor if not running."""
+        # 1. Update Global Stats
+        for item in new_items:
+            self._batch_total_size += item['msg'].file.size
+            self._file_progress[item['name']] = 0
+            await self._download_queue.put(item)
 
-    async def _start_downloads_logic(self, download_queue, concurrent_limit, save_path):
-        # Create user selected directory
+        # 2. Start Processor if idle
+        if not self.is_running:
+            self.is_cancelled = False
+            self.is_paused = False
+            self.is_running = True
+            self._global_start_time = time.time()
+            asyncio.create_task(self._queue_processor(concurrent_limit, save_path))
+
+    async def _queue_processor(self, concurrent_limit, save_path):
         os.makedirs(save_path, exist_ok=True)
-        
-        self.is_cancelled = False
-        self.is_paused = False
-        
-        self._batch_total_size = sum([item['msg'].file.size for item in download_queue])
-        self._file_progress = {item['name']: 0 for item in download_queue}
-        self._global_start_time = time.time()
-        
         sem = asyncio.Semaphore(concurrent_limit)
+
+        while True:
+            # Check for cancellation
+            if self.is_cancelled:
+                self.operation_aborted.emit()
+                self.is_running = False
+                # Drain queue
+                while not self._download_queue.empty():
+                    self._download_queue.get_nowait()
+                return
+
+            # Check if finished (Queue empty AND no active tasks)
+            if self._download_queue.empty() and not self._active_tasks:
+                self.queue_finished.emit()
+                self.is_running = False
+                # Reset stats for next clean run
+                self._batch_total_size = 0
+                self._file_progress = {}
+                return
+            
+            # Wait for pause
+            if self.is_paused:
+                await asyncio.sleep(1)
+                continue
+
+            # Fetch new task if semaphore available
+            if not self._download_queue.empty():
+                item = await self._download_queue.get()
+                
+                # Create Task
+                task = asyncio.create_task(
+                    self._download_worker(item, save_path, sem)
+                )
+                self._active_tasks.add(task)
+                task.add_done_callback(self._active_tasks.discard)
+            
+            # Small sleep to yield control
+            await asyncio.sleep(0.1)
+
+    async def _download_worker(self, item, save_path, sem):
+        filename = item['name']
+        file_size = item['msg'].file.size
+        path = os.path.join(save_path, filename)
         
-        async def download_worker(item):
-            filename = item['name']
-            file_size = item['msg'].file.size
+        ind_start_time = time.time()
+        last_emit_time = 0 
+        
+        async with sem:
+            if self.is_cancelled: return
             
-            # UPDATED: Use the custom save_path
-            path = os.path.join(save_path, filename)
-            
+            self.download_started.emit(filename, [])
             ind_start_time = time.time()
-            last_emit_time = 0 
-            
-            async with sem:
-                if self.is_cancelled: return
+
+            def progress_callback(current, total):
+                nonlocal last_emit_time
+                if self.is_cancelled: raise Exception("MANUAL_ABORT")
+                
+                # Check pause inside the download loop
                 while self.is_paused:
-                    if self.is_cancelled: return
-                    await asyncio.sleep(1)
-
-                self.download_started.emit(filename, [])
-                ind_start_time = time.time()
-
-                def progress_callback(current, total):
-                    nonlocal last_emit_time
+                    time.sleep(1) # Blocking sleep is okay inside telethon callback, or use error to break
                     if self.is_cancelled: raise Exception("MANUAL_ABORT")
-                    
-                    current_time = time.time()
-                    if (current_time - last_emit_time < 0.1) and (current != total):
-                        return
-                    last_emit_time = current_time
-                    
-                    ind_elapsed = current_time - ind_start_time or 0.001
-                    ind_speed = current / ind_elapsed
-                    ind_percent = int((current / file_size) * 100)
-                    ind_speed_str = f"{ind_speed / (1024*1024):.2f} MB/s"
-                    
-                    # Shortened Size String (User Request)
-                    ind_size_str = f"{current/(1024*1024):.1f}/{int(total/(1024*1024))} MB"
-                    
-                    ind_remaining = file_size - current
-                    ind_eta = ind_remaining / ind_speed if ind_speed > 0 else 0
-                    ind_eta_str = time.strftime('%M:%S', time.gmtime(ind_eta))
-                    
-                    self.individual_progress.emit(filename, ind_percent, ind_speed_str, ind_eta_str, ind_size_str)
-                    
-                    self._file_progress[filename] = current
-                    global_current = sum(self._file_progress.values())
-                    glob_elapsed = current_time - self._global_start_time or 0.001
-                    glob_speed = global_current / glob_elapsed
-                    glob_speed_str = f"{glob_speed / (1024*1024):.2f} MB/s"
-                    glob_percent = int((global_current / self._batch_total_size) * 100)
-                    
-                    glob_remaining = self._batch_total_size - global_current
-                    glob_eta = glob_remaining / glob_speed if glob_speed > 0 else 0
-                    glob_eta_str = time.strftime('%H:%M:%S', time.gmtime(glob_eta))
-                    glob_prog_str = f"{global_current/(1024*1024):.1f} / {self._batch_total_size/(1024*1024):.1f} MB"
-                    
-                    self.download_progress.emit(f"BATCH EXFILTRATION", glob_percent, glob_speed_str, glob_eta_str, glob_prog_str)
 
-                try:
-                    await self.client.download_media(item['msg'], file=path, progress_callback=progress_callback)
-                    self.individual_progress.emit(filename, 100, "DONE", "00:00", f"{file_size/(1024*1024):.1f} MB")
-                except Exception as e:
-                    if "MANUAL_ABORT" in str(e): raise e
-                    print(f"[ERROR] {filename}: {e}")
-                    self.individual_progress.emit(filename, 0, "FAILED", "--", "ERROR")
+                current_time = time.time()
+                if (current_time - last_emit_time < 0.1) and (current != total):
+                    return
+                last_emit_time = current_time
+                
+                # Individual Stats
+                ind_elapsed = current_time - ind_start_time or 0.001
+                ind_speed = current / ind_elapsed
+                ind_percent = int((current / file_size) * 100)
+                ind_speed_str = f"{ind_speed / (1024*1024):.2f} MB/s"
+                ind_size_str = f"{current/(1024*1024):.1f}/{int(total/(1024*1024))} MB"
+                
+                ind_remaining = file_size - current
+                ind_eta = ind_remaining / ind_speed if ind_speed > 0 else 0
+                ind_eta_str = time.strftime('%M:%S', time.gmtime(ind_eta))
+                
+                self.individual_progress.emit(filename, ind_percent, ind_speed_str, ind_eta_str, ind_size_str)
+                
+                # Global Stats
+                self._file_progress[filename] = current
+                global_current = sum(self._file_progress.values())
+                glob_elapsed = current_time - self._global_start_time or 0.001
+                glob_speed = global_current / glob_elapsed
+                glob_speed_str = f"{glob_speed / (1024*1024):.2f} MB/s"
+                
+                # Avoid division by zero if total size is 0
+                total_size_safe = self._batch_total_size or 1
+                glob_percent = int((global_current / total_size_safe) * 100)
+                
+                glob_remaining = self._batch_total_size - global_current
+                glob_eta = glob_remaining / glob_speed if glob_speed > 0 else 0
+                glob_eta_str = time.strftime('%H:%M:%S', time.gmtime(glob_eta))
+                glob_prog_str = f"{global_current/(1024*1024):.1f} / {self._batch_total_size/(1024*1024):.1f} MB"
+                
+                self.download_progress.emit(f"BATCH EXFILTRATION", glob_percent, glob_speed_str, glob_eta_str, glob_prog_str)
 
-        tasks = [asyncio.create_task(download_worker(item)) for item in download_queue]
-        try:
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            if "MANUAL_ABORT" in str(e):
-                self.operation_aborted.emit(); return
+            try:
+                await self.client.download_media(item['msg'], file=path, progress_callback=progress_callback)
+                self.individual_progress.emit(filename, 100, "DONE", "00:00", f"{file_size/(1024*1024):.1f} MB")
+                # Ensure global progress reflects 100% for this file
+                self._file_progress[filename] = file_size 
+            except Exception as e:
+                if "MANUAL_ABORT" in str(e): return
+                print(f"[ERROR] {filename}: {e}")
+                self.individual_progress.emit(filename, 0, "FAILED", "--", "ERROR")
 
-        self.queue_finished.emit()
-
+    # --- CREDENTIALS IO ---
     def _load_credentials(self):
         if not os.path.exists(CRED_FILE): return None, None, None
         try:
