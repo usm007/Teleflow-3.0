@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QCursor, QIcon, QColor, QBrush
 from core import TelegramWorker
 from assets import (DecryptLabel, HackerProgressBar, TerminalLog, CyberGraph, 
-                    CyberHexStream, ScanlineOverlay, MatrixLoader)
+                    CyberHexStream, ScanlineOverlay, MatrixLoader, CyberLoadingOverlay)
 
 try:
     myappid = u'teleflow.downloader.pro.v3' 
@@ -85,6 +85,7 @@ STYLESHEET = """
     QPushButton:hover { background-color: #388e3c; }
     QPushButton#Secondary { background-color: #333; color: #ccc; }
     QPushButton#Destructive { background-color: #b71c1c; color: white; }
+    QPushButton#Amber { background-color: #ff8f00; color: black; }
     
     QPushButton#FilterBtn { background-color: #222; color: #666; border: 1px solid #333; font-size: 11px; }
     QPushButton#FilterBtn:checked { background-color: #222; color: #4caf50; border: 1px solid #4caf50; }
@@ -153,6 +154,9 @@ class MainWindow(QMainWindow):
         self.init_footer(); self.init_login_page(); self.init_chat_page(); self.init_video_page(); self.init_download_page()
         self.is_downloading = False; self.all_chats = []; self.current_videos = []; self.sort_reverse = False
         
+        # --- LOADING OVERLAY ---
+        self.loader = CyberLoadingOverlay(self.central_container)
+        
         self.worker.saved_creds_found.connect(self.on_creds_found)
         self.worker.request_creds.connect(lambda: self.stack.setCurrentIndex(0))
         self.worker.login_success.connect(lambda: self.stack.setCurrentIndex(1))
@@ -164,8 +168,8 @@ class MainWindow(QMainWindow):
         self.worker.individual_progress.connect(self.update_individual_row)
         self.worker.queue_finished.connect(self.on_queue_finished)
         self.worker.auth_status.connect(self.update_status)
-        self.worker.request_otp.connect(lambda: self.login_stack.setCurrentIndex(1))
-        self.worker.request_password.connect(lambda: self.login_stack.setCurrentIndex(2))
+        self.worker.request_otp.connect(self.on_request_otp)
+        self.worker.request_password.connect(self.on_request_pwd)
         self.stack.currentChanged.connect(self.check_footer_visibility)
 
         self.drama_timer = QTimer(self)
@@ -181,7 +185,10 @@ class MainWindow(QMainWindow):
         self.cnt_down = 0
         self.cnt_queue = 0
 
-    def resizeEvent(self, event): self.scanlines.setGeometry(self.rect()); super().resizeEvent(event)
+    def resizeEvent(self, event): 
+        self.scanlines.setGeometry(self.rect())
+        self.loader.setGeometry(self.rect()) # KEEP OVERLAY FULL SIZE
+        super().resizeEvent(event)
 
     # --- PAGES ---
     def init_login_page(self):
@@ -226,13 +233,13 @@ class MainWindow(QMainWindow):
         pg1 = QWidget(); p1l = QVBoxLayout(pg1); p1l.setSpacing(20); p1l.setContentsMargins(20,20,20,20)
         p1l.addWidget(DecryptLabel("VERIFY CODE", size=24), alignment=Qt.AlignCenter)
         self.inp_otp = QLineEdit(placeholderText="Code"); p1l.addWidget(self.inp_otp)
-        btn_otp = QPushButton("VERIFY"); btn_otp.clicked.connect(lambda: asyncio.create_task(self.worker.submit_otp(self.inp_otp.text()))); p1l.addWidget(btn_otp)
+        btn_otp = QPushButton("VERIFY"); btn_otp.clicked.connect(self.do_verify_otp); p1l.addWidget(btn_otp)
         self.login_stack.addWidget(pg1)
 
         pg2 = QWidget(); p2l = QVBoxLayout(pg2); p2l.setSpacing(20); p2l.setContentsMargins(20,20,20,20)
         p2l.addWidget(DecryptLabel("CLOUD PWD", size=24), alignment=Qt.AlignCenter)
         self.inp_2fa = QLineEdit(placeholderText="2FA Password"); self.inp_2fa.setEchoMode(QLineEdit.Password); p2l.addWidget(self.inp_2fa)
-        btn_2fa = QPushButton("AUTHENTICATE"); btn_2fa.clicked.connect(lambda: asyncio.create_task(self.worker.submit_password(self.inp_2fa.text()))); p2l.addWidget(btn_2fa)
+        btn_2fa = QPushButton("AUTHENTICATE"); btn_2fa.clicked.connect(self.do_verify_pwd); p2l.addWidget(btn_2fa)
         self.login_stack.addWidget(pg2)
         l_main.addWidget(login_pan); layout.addWidget(login_area, 1); self.stack.addWidget(p)
 
@@ -415,70 +422,108 @@ class MainWindow(QMainWindow):
         self.lbl_queue_count.setText(f"⏳ QUEUED: {self.cnt_queue}")
 
     def start_download_batch(self):
+        # 1. Show Loader
+        self.loader.start("ALLOCATING THREADS...")
+        # Allow UI to render the loader before processing
+        QApplication.processEvents()
+        
         q = []
-        # --- FIXED: Retrieve stored video data from the table item ---
+        # Get selected items
         for i in range(self.video_table.rowCount()):
             item = self.video_table.item(i, 0)
             if item.checkState() == Qt.Checked:
-                # Get the actual video object we stored in setData(Qt.UserRole)
-                # This ensures correct file is downloaded even if list is filtered/sorted
                 video_data = item.data(Qt.UserRole)
                 if video_data:
                     q.append(video_data)
+        
+        # --- NEW: Filter out items already in the active list ---
+        q = [x for x in q if x['name'] not in self.row_map]
+        
+        if not q:
+            self.loader.stop()
+            if self.is_downloading:
+                QMessageBox.information(self, "Info", "Selected files are already in queue.")
+            return
 
-        if q:
-            # --- CONFLICT CHECK ---
-            conflicts = []
-            for item in q:
-                if os.path.exists(os.path.join(self.download_path, item['name'])):
-                    conflicts.append(item['name'])
+        # --- CONFLICT CHECK ---
+        conflicts = []
+        for item in q:
+            if os.path.exists(os.path.join(self.download_path, item['name'])):
+                conflicts.append(item['name'])
+        
+        if conflicts:
+            # Hide loader to show popup
+            self.loader.stop()
+            box = QMessageBox(self)
+            box.setWindowTitle("FILE CONFLICT")
+            box.setText(f"{len(conflicts)} files already exist in the destination folder.")
+            box.setInformativeText("How do you want to proceed?")
+            box.setStyleSheet("background-color: #222; color: #eee;")
             
-            if conflicts:
-                box = QMessageBox(self)
-                box.setWindowTitle("FILE CONFLICT")
-                box.setText(f"{len(conflicts)} files already exist in the destination folder.")
-                box.setInformativeText("How do you want to proceed?")
-                box.setStyleSheet("background-color: #222; color: #eee;")
-                
-                btn_skip = box.addButton("Skip Existing", QMessageBox.ActionRole)
-                btn_over = box.addButton("Overwrite All", QMessageBox.ActionRole)
-                btn_cancel = box.addButton(QMessageBox.Cancel)
-                
-                box.exec()
-                
-                if box.clickedButton() == btn_cancel:
-                    return
-                elif box.clickedButton() == btn_skip:
-                    q = [x for x in q if x['name'] not in conflicts]
-                    if not q: return 
-            # ----------------------
+            btn_skip = box.addButton("Skip Existing", QMessageBox.ActionRole)
+            btn_over = box.addButton("Overwrite All", QMessageBox.ActionRole)
+            btn_cancel = box.addButton(QMessageBox.Cancel)
+            
+            box.exec()
+            
+            if box.clickedButton() == btn_cancel:
+                return
+            elif box.clickedButton() == btn_skip:
+                q = [x for x in q if x['name'] not in conflicts]
+                if not q: return 
+            
+            # Restart loader if continuing
+            self.loader.start("ALLOCATING THREADS...")
+            QApplication.processEvents()
+        # ----------------------
 
-            self.stack.setCurrentIndex(3)
-            limit = self.spin_concurrent.value()
+        self.stack.setCurrentIndex(3)
+        limit = self.spin_concurrent.value()
+        
+        # --- NEW: APPEND OR RESET LOGIC ---
+        start_index = 0
+        if self.is_downloading:
+            start_index = self.active_table.rowCount()
+            self.active_table.setRowCount(start_index + len(q))
+            self.cnt_queue += len(q) # Add to existing queue count
+        else:
             self.active_table.setRowCount(len(q))
             self.row_map = {} 
             self.cnt_down = 0; self.cnt_queue = len(q)
-            self.update_header_counts()
-            for i, item in enumerate(q):
-                self.row_map[item['name']] = i
-                name_item = QTableWidgetItem(item['name'])
-                name_item.setForeground(QBrush(QColor("#ffca28"))) 
-                self.active_table.setItem(i, 0, name_item)
-                self.active_table.setItem(i, 1, QTableWidgetItem("PENDING"))
-                self.active_table.setItem(i, 2, QTableWidgetItem("--"))
-                self.active_table.setItem(i, 3, QTableWidgetItem("--"))
-                self.active_table.setItem(i, 4, QTableWidgetItem("--"))
-                for c in range(5): 
-                    if self.active_table.item(i,c): self.active_table.item(i,c).setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        
+        self.update_header_counts()
+        
+        for i, item in enumerate(q):
+            row = start_index + i
+            self.row_map[item['name']] = row
             
-            asyncio.create_task(self.worker.start_downloads(q, limit, self.download_path))
+            name_item = QTableWidgetItem(item['name'])
+            name_item.setForeground(QBrush(QColor("#ffca28"))) 
+            self.active_table.setItem(row, 0, name_item)
+            
+            self.active_table.setItem(row, 1, QTableWidgetItem("PENDING"))
+            self.active_table.setItem(row, 2, QTableWidgetItem("--"))
+            self.active_table.setItem(row, 3, QTableWidgetItem("--"))
+            self.active_table.setItem(row, 4, QTableWidgetItem("--"))
+            
+            for c in range(5): 
+                if self.active_table.item(row,c): 
+                    self.active_table.item(row,c).setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        
+        # Hide loader before starting async task
+        self.loader.stop()
+        asyncio.create_task(self.worker.add_to_queue(q, limit, self.download_path))
 
     def on_dl_start(self, f, r): 
         if not self.is_downloading:
             self.toggle_sleep_prevention(True)
-        self.is_downloading = True; self.check_footer_visibility(); self.foot_lbl_name.setText(f"BATCH EXFILTRATION...")
-        self.drama_timer.start(800)
-        self.cnt_down += 1; self.cnt_queue -= 1
+            self.drama_timer.start(800)
+            
+        self.is_downloading = True
+        self.check_footer_visibility()
+        self.foot_lbl_name.setText(f"BATCH EXFILTRATION...")
+        
+        self.cnt_down += 1; self.cnt_queue = max(0, self.cnt_queue - 1)
         self.update_header_counts()
         if f in self.row_map:
             row = self.row_map[f]
@@ -521,7 +566,9 @@ class MainWindow(QMainWindow):
         setattr(self, o, lb)
         return b
 
-    def store_and_populate_chats(self, chats): self.all_chats = chats; self.apply_chat_filter(); self.stack.setCurrentIndex(1)
+    def store_and_populate_chats(self, chats): 
+        self.loader.stop() # Hide loader once data is ready
+        self.all_chats = chats; self.apply_chat_filter(); self.stack.setCurrentIndex(1)
     
     def apply_chat_filter(self):
         s = self.sender(); [b.setChecked(False) for b in [self.btn_all, self.btn_ch, self.btn_gr, self.btn_dm] if s and s in [self.btn_all, self.btn_ch, self.btn_gr, self.btn_dm]]
@@ -543,43 +590,27 @@ class MainWindow(QMainWindow):
         self.refresh_video_table()
     
     def refresh_video_table(self):
-        # --- OPTIMIZATION: DISABLE SORTING DURING UPDATE ---
         self.video_table.setSortingEnabled(False)
-        
         s_txt = self.search_videos.text().lower()
         show_captions = self.chk_show_caption.isChecked()
         target_key = 'caption' if show_captions else 'name'
-        
         f_vids = [v for v in self.current_videos if s_txt in v[target_key].lower()]
         self.video_table.setRowCount(len(f_vids))
-        
         for i, v in enumerate(f_vids):
             c = QTableWidgetItem()
-            
-            # --- FIXED: Stopped auto-selecting when searching ---
-            # Default state is Unchecked
             c.setCheckState(Qt.Unchecked)
-            
-            # --- FIXED: Store the video object in the item data ---
-            # This allows us to retrieve the correct video later, regardless of sort/filter order
             c.setData(Qt.UserRole, v)
-            
             self.video_table.setItem(i, 0, c)
-            
             num = QTableWidgetItem(str(i+1))
             num.setTextAlignment(Qt.AlignCenter)
             self.video_table.setItem(i, 1, num)
-            
             display_text = v['caption'] if show_captions else v['name']
-            
             item_text = QTableWidgetItem(display_text)
             item_text.setToolTip(display_text)
             self.video_table.setItem(i, 2, item_text)
-            
             sz = QTableWidgetItem(v['size'])
             sz.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.video_table.setItem(i, 3, sz)
-            
         self.video_table.resizeRowsToContents()
 
     def on_video_cell_double_click(self, row, col):
@@ -589,8 +620,31 @@ class MainWindow(QMainWindow):
         ns = Qt.Checked if self.video_table.item(0,0).checkState() == Qt.Unchecked else Qt.Unchecked
         for i in range(self.video_table.rowCount()): self.video_table.item(i,0).setCheckState(ns)
     def on_creds_found(self, a, h, p): self.inp_api.setText(a); self.inp_hash.setText(h); self.inp_phone.setText(p)
-    def do_connect(self): asyncio.create_task(self.worker.connect_client(self.inp_api.text(), self.inp_hash.text(), self.inp_phone.text()))
-    def update_status(self, m): self.lbl_login_status.setText(m)
+    
+    # --- AUTH METHODS WITH LOADING ---
+    def do_connect(self): 
+        self.loader.start("ESTABLISHING UPLINK...")
+        asyncio.create_task(self.worker.connect_client(self.inp_api.text(), self.inp_hash.text(), self.inp_phone.text()))
+    
+    def do_verify_otp(self):
+        self.loader.start("VERIFYING IDENTITY...")
+        asyncio.create_task(self.worker.submit_otp(self.inp_otp.text()))
+        
+    def do_verify_pwd(self):
+        self.loader.start("DECRYPTING...")
+        asyncio.create_task(self.worker.submit_password(self.inp_2fa.text()))
+        
+    def on_request_otp(self):
+        self.loader.stop()
+        self.login_stack.setCurrentIndex(1)
+        
+    def on_request_pwd(self):
+        self.loader.stop()
+        self.login_stack.setCurrentIndex(2)
+
+    def update_status(self, m): 
+        self.loader.stop() # Stop loader on error
+        self.lbl_login_status.setText(m)
 
 def main():
     app = QApplication(sys.argv); loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
