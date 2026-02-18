@@ -94,158 +94,145 @@ class CyberGraph(QWidget):
         for i, v in enumerate(self.values): path.lineTo(i*step, h-(v/100*h))
         painter.setPen(QPen(QColor(76, 175, 80), 2)); painter.drawPath(path)
 
-# --- 7. MATRIX LOADER (CLI STACK + PROGRESS BAR) ---
+# --- 7. MATRIX LOADER (THE REACTOR) ---
 class MatrixLoader(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._update)
-        self.timer.start(50)
-        
+        self.angle_outer = 0
+        self.angle_inner = 0
+        self.pulse = 0
         self.found_count = 0
-        self.progress_val = 0
-        self.log_lines = []
         
-        # Fake Data for CLI Side Panel
-        self.modules = [
-            ("NET_HOOK", "ACTIVE"),
-            ("BYPASS_V4", "OK"),
-            ("PACKET_SNIFF", "RUNNING"),
-            ("ROOT_ACCESS", "GRANTED"),
-            ("DB_INJECT", "PENDING"),
-            ("PROXY_CHAIN", "ROTATING")
-        ]
-        
-        self.target_info = [
-            "TARGET: TELEGRAM_API",
-            f"PORT: 443 [OPEN]",
-            "AUTH: BEARER_TOKEN",
-            "CIPHER: AES-256-GCM"
-        ]
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._animate)
+        self.timer.start(16) # ~60 FPS
 
     def set_count(self, c):
         self.found_count = c
 
-    def _update(self):
-        # 1. Animate Progress Bar (Looping 0-100% to show activity)
-        self.progress_val += 1
-        if self.progress_val > 100: self.progress_val = 0
-        
-        # 2. Update Fake Logs (Rolling Hex Dump)
-        if random.random() > 0.7:
-            cmds = ["MOV", "XOR", "JMP", "PUSH", "POP", "CALL", "RET"]
-            addr = "".join(random.choices("0123456789ABCDEF", k=4))
-            val  = "".join(random.choices("0123456789ABCDEF", k=2))
-            cmd  = random.choice(cmds)
-            self.log_lines.append(f"0x{addr} : {cmd} {val}")
-            if len(self.log_lines) > 12: self.log_lines.pop(0)
-            
+    def _animate(self):
+        self.angle_outer = (self.angle_outer + 2) % 360
+        self.angle_inner = (self.angle_inner - 4) % 360
+        self.pulse = (self.pulse + 0.1)
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(10, 10, 10)) # Dark Background
+        painter.setRenderHint(QPainter.Antialiasing)
         
-        w, h = self.width(), self.height()
-        left_panel_w = 250
-        
-        # --- LEFT PANEL: CLI STACK ---
-        # Darker background for sidebar
-        painter.fillRect(0, 0, left_panel_w, h, QColor(15, 15, 15))
-        # Divider Line
-        painter.setPen(QPen(QColor(50, 50, 50), 1))
-        painter.drawLine(left_panel_w, 0, left_panel_w, h)
-        
-        painter.setFont(QFont("Consolas", 10))
-        x_padding = 15
-        current_y = 25
-        
-        # Section 1: Target Info
-        painter.setPen(QColor(0, 255, 65))
-        painter.drawText(x_padding, current_y, ">> TARGET_INFO")
-        current_y += 20
-        painter.setPen(QColor(180, 255, 180))
-        for line in self.target_info:
-            painter.drawText(x_padding + 5, current_y, line)
-            current_y += 18
-            
-        current_y += 20
-        
-        # Section 2: Modules
-        painter.setPen(QColor(0, 255, 65))
-        painter.drawText(x_padding, current_y, ">> ACTIVE_MODULES")
-        current_y += 20
-        for name, status in self.modules:
-            color = QColor(100, 255, 100)
-            if status == "PENDING": color = QColor(255, 200, 50)
-            # Random glitch effect
-            if random.random() > 0.98: color = QColor(255, 255, 255) 
-            
-            painter.setPen(color)
-            painter.drawText(x_padding + 5, current_y, f"[{name:<12}] {status}")
-            current_y += 18
-            
-        current_y += 20
-        
-        # Section 3: Rolling Log (Fills remaining height)
-        painter.setPen(QColor(0, 255, 65))
-        painter.drawText(x_padding, current_y, ">> MEMORY_STREAM")
-        current_y += 20
-        painter.setPen(QColor(100, 200, 100))
-        for line in self.log_lines:
-            painter.drawText(x_padding + 5, current_y, line)
-            current_y += 18
+        # 1. Background (Subtle radial gradient)
+        # grad = QRadialGradient(self.rect().center(), self.width()/2)
+        # grad.setColorAt(0, QColor(0, 30, 0))
+        # grad.setColorAt(1, QColor(10, 10, 10))
+        # painter.fillRect(self.rect(), QBrush(grad))
+        painter.fillRect(self.rect(), QColor(10, 10, 10))
 
-        # --- RIGHT PANEL: HUD & PROGRESS ---
-        center_x = left_panel_w + (w - left_panel_w) // 2
-        center_y = h // 2
+        center_x = self.width() / 2
+        center_y = self.height() / 2
+        anim_y = center_y - 40 # Shift animation up slightly
         
-        # 1. Main Title
-        painter.setFont(QFont("Consolas", 24, QFont.Bold))
-        painter.setPen(QColor(0, 255, 65))
-        title = "SYSTEM INFILTRATION"
-        tm = painter.fontMetrics()
-        painter.drawText(center_x - tm.horizontalAdvance(title)//2, center_y - 80, title)
+        # 2. Draw Animation (The Reactor)
+        painter.save()
+        painter.translate(center_x, anim_y)
         
-        # 2. Subtitle
-        painter.setFont(QFont("Consolas", 12))
-        painter.setPen(QColor(200, 255, 200))
-        sub = "SCANNING SECTOR 7G..."
-        sm = painter.fontMetrics()
-        painter.drawText(center_x - sm.horizontalAdvance(sub)//2, center_y - 45, sub)
-        
-        # 3. BIG PROGRESS BAR
-        bar_w = 400
-        bar_h = 35
-        bar_x = center_x - bar_w // 2
-        bar_y = center_y - 10
-        
-        # Frame
-        painter.setPen(QPen(QColor(0, 255, 65), 2))
+        # Ring 1 (Static Track)
+        painter.setPen(QPen(QColor(0, 255, 65, 30), 2))
         painter.setBrush(Qt.NoBrush)
-        painter.drawRect(bar_x, bar_y, bar_w, bar_h)
+        painter.drawEllipse(QPointF(0,0), 60, 60)
         
-        # Fill (Segmented Blocks)
-        painter.setBrush(QColor(0, 255, 65))
+        # Ring 2 (Outer Rotating)
+        painter.rotate(self.angle_outer)
+        painter.setPen(QPen(QColor(0, 255, 65), 3, Qt.SolidLine, Qt.RoundCap))
+        # Draw 3 arcs
+        painter.drawArc(QRectF(-60, -60, 120, 120), 0, 100 * 16)
+        painter.drawArc(QRectF(-60, -60, 120, 120), 120 * 16, 100 * 16)
+        painter.drawArc(QRectF(-60, -60, 120, 120), 240 * 16, 100 * 16)
+        
+        # Ring 3 (Inner Rotating Counter)
+        painter.rotate(-self.angle_outer - self.angle_inner) # Undo previous rotate, then rotate back
+        painter.setPen(QPen(QColor(0, 255, 65, 180), 5, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(QRectF(-40, -40, 80, 80), 0, 270 * 16)
+        
+        # Core (Pulsing)
+        painter.rotate(self.angle_inner) # Reset rotation
+        pulse_size = 15 + math.sin(self.pulse) * 3
         painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 255, 65, 200))
+        painter.drawEllipse(QPointF(0,0), pulse_size, pulse_size)
         
-        fill_pct = self.progress_val / 100
-        fill_width = int(bar_w * fill_pct)
-        
-        block_w = 12
-        spacing = 3
-        for bx in range(bar_x + 4, bar_x + fill_width - 4, block_w + spacing):
-            if bx + block_w > bar_x + bar_w - 4: break
-            painter.drawRect(bx, bar_y + 4, block_w, bar_h - 8)
-            
-        # Percentage Text
-        painter.setFont(QFont("Consolas", 14, QFont.Bold))
-        painter.setPen(QColor(255, 255, 255))
-        painter.drawText(bar_x + bar_w + 15, bar_y + 22, f"{self.progress_val}%")
+        painter.restore()
 
-        # 4. Payload Counter
-        painter.setFont(QFont("Consolas", 20, QFont.Bold))
-        painter.setPen(QColor(255, 255, 0)) # Yellow High-Vis
-        count_str = f"PAYLOADS IDENTIFIED: {self.found_count}"
-        cm = painter.fontMetrics()
-        painter.drawText(center_x - cm.horizontalAdvance(count_str)//2, bar_y + 90, count_str)
+        # 3. Draw Count (Below Animation)
+        painter.setPen(QColor(0, 255, 65))
+        painter.setFont(QFont("Consolas", 48, QFont.Bold))
+        
+        count_str = f"{self.found_count}"
+        fm = painter.fontMetrics()
+        text_w = fm.horizontalAdvance(count_str)
+        text_h = fm.height()
+        
+        # Position below animation
+        text_y = anim_y + 80 + text_h 
+        painter.drawText(center_x - text_w/2, text_y, count_str)
+        
+        # 4. Draw Label (Below Count)
+        painter.setPen(QColor(0, 255, 65, 150)) # Dimmer green
+        painter.setFont(QFont("Consolas", 12))
+        lbl_str = "PAYLOADS DETECTED"
+        fm2 = painter.fontMetrics()
+        lbl_w = fm2.horizontalAdvance(lbl_str)
+        
+        painter.drawText(center_x - lbl_w/2, text_y + 20, lbl_str)
+
+# --- 8. GLOBAL LOADING OVERLAY ---
+class CyberLoadingOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False) # Block inputs
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.angle = 0
+        self.text = "PROCESSING..."
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._animate)
+        self.hide()
+
+    def start(self, text):
+        self.text = text
+        self.show()
+        self.raise_()
+        self.timer.start(30)
+
+    def stop(self):
+        self.hide()
+        self.timer.stop()
+
+    def _animate(self):
+        self.angle = (self.angle + 15) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 220)) # Dark Overlay
+
+        center = QPointF(self.width()/2, self.height()/2)
+        radius = 45
+
+        # Draw Spinning Arcs
+        p.setPen(QPen(QColor("#4caf50"), 4, Qt.SolidLine, Qt.RoundCap))
+        # Outer Ring
+        p.drawArc(QRectF(center.x()-radius, center.y()-radius, radius*2, radius*2), -self.angle * 16, 120 * 16)
+        p.drawArc(QRectF(center.x()-radius, center.y()-radius, radius*2, radius*2), -(self.angle + 180) * 16, 120 * 16)
+        
+        # Inner Ring
+        radius_in = 30
+        p.setPen(QPen(QColor("#00ff41"), 2, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(center.x()-radius_in, center.y()-radius_in, radius_in*2, radius_in*2), (self.angle * 2) * 16, 260 * 16)
+
+        # Draw Text
+        p.setFont(QFont("Consolas", 14, QFont.Bold))
+        p.setPen(QColor("white"))
+        fm = p.fontMetrics()
+        tw = fm.horizontalAdvance(self.text)
+        p.drawText(center.x() - tw/2, center.y() + radius + 40, self.text)
